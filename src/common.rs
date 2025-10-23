@@ -114,12 +114,6 @@ pub fn global_init() -> bool {
         }
     }
     
-    // 设置启动时检查更新的默认值为禁用
-    config::DEFAULT_LOCAL_SETTINGS
-        .write()
-        .unwrap()
-        .insert(keys::OPTION_ENABLE_CHECK_UPDATE.to_string(), "N".to_string());
-    
     true
 }
 
