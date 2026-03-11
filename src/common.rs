@@ -1048,7 +1048,17 @@ pub fn get_audit_server(api: String, custom: String, typ: String) -> String {
 }
 
 pub async fn post_request(url: String, body: String, header: &str) -> ResultType<String> {
-    let mut req = create_http_client_async().post(url);
+    // Resolve domain to IP for the URL to avoid SSL certificate issues
+    let resolved_url = resolve_url_to_ip(&url).await.unwrap_or_else(|e| {
+        log::debug!("Failed to resolve URL {} to IP: {}, using original", url, e);
+        url.clone()
+    });
+    
+    if resolved_url != url {
+        log::info!("HTTP request: {} -> {}", url, resolved_url);
+    }
+    
+    let mut req = create_http_client_async().post(resolved_url);
     if !header.is_empty() {
         let tmp: Vec<&str> = header.split(": ").collect();
         if tmp.len() == 2 {
@@ -1058,6 +1068,58 @@ pub async fn post_request(url: String, body: String, header: &str) -> ResultType
     req = req.header("Content-Type", "application/json");
     let to = std::time::Duration::from_secs(12);
     Ok(req.body(body).timeout(to).send().await?.text().await?)
+}
+
+/// Resolve domain in URL to IP address to avoid SSL certificate issues
+async fn resolve_url_to_ip(url: &str) -> ResultType<String> {
+    use url::Url;
+    
+    let parsed_url = Url::parse(url)?;
+    
+    // If host is already an IP address, return as-is
+    if let Some(host) = parsed_url.host_str() {
+        if hbb_common::is_ip_str(host) {
+            return Ok(url.to_string());
+        }
+        
+        // Resolve hostname to IP using simple DNS lookup
+        let host_with_port = if let Some(port) = parsed_url.port() {
+            format!("{}:{}", host, port)
+        } else {
+            // Use default ports for HTTP/HTTPS
+            let default_port = match parsed_url.scheme() {
+                "https" => 443,
+                "http" => 80,
+                _ => return Ok(url.to_string()), // Unknown scheme, return as-is
+            };
+            format!("{}:{}", host, default_port)
+        };
+        
+        // Perform DNS lookup
+        match tokio::net::lookup_host(&host_with_port).await {
+            Ok(mut addrs) => {
+                if let Some(addr) = addrs.next() {
+                    let ip = addr.ip();
+                    log::debug!("Resolved {} to {}", host, ip);
+                    
+                    // Reconstruct URL with IP address
+                    let mut new_url = parsed_url.clone();
+                    new_url.set_host(Some(&ip.to_string()))?;
+                    
+                    Ok(new_url.to_string())
+                } else {
+                    log::debug!("No addresses found for {}", host);
+                    Ok(url.to_string())
+                }
+            }
+            Err(e) => {
+                log::debug!("Failed to resolve host {} in URL: {}", host, e);
+                Ok(url.to_string())
+            }
+        }
+    } else {
+        Ok(url.to_string())
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -1072,12 +1134,22 @@ pub async fn http_request_sync(
     body: Option<String>,
     header: String,
 ) -> ResultType<String> {
+    // Resolve domain to IP for the URL to avoid SSL certificate issues
+    let resolved_url = resolve_url_to_ip(&url).await.unwrap_or_else(|e| {
+        log::debug!("Failed to resolve URL {} to IP: {}, using original", url, e);
+        url.clone()
+    });
+    
+    if resolved_url != url {
+        log::info!("HTTP request: {} -> {}", url, resolved_url);
+    }
+    
     let http_client = create_http_client_async();
     let mut http_client = match method.as_str() {
-        "get" => http_client.get(url),
-        "post" => http_client.post(url),
-        "put" => http_client.put(url),
-        "delete" => http_client.delete(url),
+        "get" => http_client.get(resolved_url),
+        "post" => http_client.post(resolved_url),
+        "put" => http_client.put(resolved_url),
+        "delete" => http_client.delete(resolved_url),
         _ => return Err(anyhow!("The HTTP request method is not supported!")),
     };
     let v = serde_json::from_str(header.as_str())?;
