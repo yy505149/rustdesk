@@ -1096,7 +1096,8 @@ async fn resolve_url_to_ip(url: &str) -> ResultType<String> {
         };
         
         // Perform DNS lookup
-        match tokio::net::lookup_host(&host_with_port).await {
+        let lookup_result = tokio::net::lookup_host(&host_with_port).await;
+        match lookup_result {
             Ok(mut addrs) => {
                 if let Some(addr) = addrs.next() {
                     let ip = addr.ip();
