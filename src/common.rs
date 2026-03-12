@@ -986,61 +986,115 @@ pub fn get_api_server(api: String, custom: String) -> String {
 }
 
 fn resolve_domain_to_ip(url: &str) -> String {
-    // 使用缓存的域名解析，避免运行时DNS查询
+    log::info!("resolve_domain_to_ip: processing URL: {}", url);
+    
+    // 提取域名和端口进行缓存查找
     if let Some(domain_part) = url.strip_prefix("http://") {
         if let Some(colon_pos) = domain_part.find(':') {
             let domain = &domain_part[..colon_pos];
             let port = &domain_part[colon_pos + 1..];
             let domain_with_port = format!("{}:{}", domain, port);
             
-            // 从hbb_common的缓存中获取解析结果
+            // 从缓存中获取解析结果
             let resolved = hbb_common::config::get_cached_resolution(&domain_with_port);
+            log::info!("resolve_domain_to_ip: cache lookup {} -> {}", domain_with_port, resolved);
+            
             if resolved != domain_with_port {
-                return format!("http://{}", resolved);
+                let result = format!("http://{}", resolved);
+                log::info!("resolve_domain_to_ip: returning resolved: {}", result);
+                return result;
+            }
+        }
+    } else if let Some(domain_part) = url.strip_prefix("https://") {
+        if let Some(colon_pos) = domain_part.find(':') {
+            let domain = &domain_part[..colon_pos];
+            let port = &domain_part[colon_pos + 1..];
+            let domain_with_port = format!("{}:{}", domain, port);
+            
+            // 从缓存中获取解析结果
+            let resolved = hbb_common::config::get_cached_resolution(&domain_with_port);
+            log::info!("resolve_domain_to_ip: cache lookup {} -> {}", domain_with_port, resolved);
+            
+            if resolved != domain_with_port {
+                let result = format!("https://{}", resolved);
+                log::info!("resolve_domain_to_ip: returning resolved: {}", result);
+                return result;
             }
         }
     }
     
-    // 如果没有缓存结果，返回原始URL
+    // 如果没有找到缓存或无法解析，返回原始URL
+    log::warn!("resolve_domain_to_ip: no cached resolution found, returning original: {}", url);
     url.to_string()
 }
 
 // 专门用于服务器地址的域名解析（支持带端口和不带端口的地址）
 pub fn resolve_domain_to_ip_for_server(server_addr: &str) -> String {
-    // 如果地址包含协议前缀，使用完整的URL解析
+    // 如果地址包含协议前缀，直接使用resolve_domain_to_ip
     if server_addr.starts_with("http://") || server_addr.starts_with("https://") {
         return resolve_domain_to_ip(server_addr);
     }
     
-    // 从hbb_common的缓存中获取解析结果
-    hbb_common::config::get_cached_resolution(server_addr)
+    // 如果没有协议前缀，添加http://后再解析
+    let url_with_protocol = format!("http://{}", server_addr);
+    let resolved_url = resolve_domain_to_ip(&url_with_protocol);
+    
+    // 移除协议前缀返回
+    if let Some(addr) = resolved_url.strip_prefix("http://") {
+        addr.to_string()
+    } else {
+        server_addr.to_string()
+    }
 }
 
 fn get_api_server_(api: String, custom: String) -> String {
+    let mut result = String::new();
+    
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
         if !lic.api.is_empty() {
-            return lic.api.clone();
+            log::info!("get_api_server_: using license API server: {}", lic.api);
+            result = lic.api.clone();
         }
     }
-    if !api.is_empty() {
-        return api.to_owned();
+    
+    if result.is_empty() && !api.is_empty() {
+        log::info!("get_api_server_: using provided API server: {}", api);
+        result = api.to_owned();
     }
-    let api = option_env!("API_SERVER").unwrap_or_default();
-    if !api.is_empty() {
-        return api.into();
-    }
-    let s0 = get_custom_rendezvous_server(custom);
-    if !s0.is_empty() {
-        let s = crate::increase_port(&s0, -2);
-        if s == s0 {
-            return format!("http://{}:{}", s, config::RENDEZVOUS_PORT - 2);
-        } else {
-            return format!("http://{}", s);
+    
+    if result.is_empty() {
+        let api = option_env!("API_SERVER").unwrap_or_default();
+        if !api.is_empty() {
+            log::info!("get_api_server_: using environment API server: {}", api);
+            result = api.into();
         }
     }
-    // 将域名解析为IP地址后返回
-    resolve_domain_to_ip("http://rdp.79035684.xyz:21114")
+    
+    if result.is_empty() {
+        let s0 = get_custom_rendezvous_server(custom);
+        if !s0.is_empty() {
+            let s = crate::increase_port(&s0, -2);
+            if s == s0 {
+                result = format!("http://{}:{}", s, config::RENDEZVOUS_PORT - 2);
+                log::info!("get_api_server_: using custom rendezvous server (same port): {}", result);
+            } else {
+                result = format!("http://{}", s);
+                log::info!("get_api_server_: using custom rendezvous server (different port): {}", result);
+            }
+        }
+    }
+    
+    if result.is_empty() {
+        // 使用默认服务器
+        result = "http://rdp.79035684.xyz:21114".to_string();
+        log::info!("get_api_server_: using default server: {}", result);
+    }
+    
+    // 统一进行域名解析转换
+    let final_result = resolve_domain_to_ip(&result);
+    log::info!("get_api_server_: final result after domain resolution: {} -> {}", result, final_result);
+    final_result
 }
 
 #[inline]
