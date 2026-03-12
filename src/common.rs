@@ -1001,6 +1001,42 @@ fn resolve_domain_to_ip(url: &str) -> String {
     resolve_sync(url)
 }
 
+// 专门用于服务器地址的域名解析（支持带端口和不带端口的地址）
+pub fn resolve_domain_to_ip_for_server(server_addr: &str) -> String {
+    // 如果地址包含协议前缀，使用完整的URL解析
+    if server_addr.starts_with("http://") || server_addr.starts_with("https://") {
+        return resolve_domain_to_ip(server_addr);
+    }
+    
+    // 对于纯地址:端口格式的服务器地址
+    if let Some(colon_pos) = server_addr.rfind(':') {
+        let domain = &server_addr[..colon_pos];
+        let port = &server_addr[colon_pos + 1..];
+        
+        // 如果已经是IP地址，直接返回
+        if hbb_common::is_ip_str(domain) {
+            return server_addr.to_string();
+        }
+        
+        // 尝试解析域名为IP地址
+        match format!("{}:{}", domain, port).to_socket_addrs() {
+            Ok(mut addrs) => {
+                if let Some(addr) = addrs.next() {
+                    log::info!("Resolved server domain {} to IP {}", domain, addr.ip());
+                    return format!("{}:{}", addr.ip(), port);
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to resolve server domain {}: {}", domain, e);
+            }
+        }
+    }
+    
+    // 如果解析失败，返回原始地址
+    log::warn!("Using original server address as fallback: {}", server_addr);
+    server_addr.to_string()
+}
+
 fn get_api_server_(api: String, custom: String) -> String {
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
@@ -1025,7 +1061,7 @@ fn get_api_server_(api: String, custom: String) -> String {
         }
     }
     // 将域名解析为IP地址后返回
-    resolve_domain_to_ip("http://rdp.hanlyenergy.tech:21114")
+    resolve_domain_to_ip("http://rdp.79035684.xyz:21114")
 }
 
 #[inline]

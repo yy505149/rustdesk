@@ -710,7 +710,9 @@ impl RendezvousMediator {
         if relay_server.is_empty() {
             relay_server = crate::increase_port(&self.host, 1);
         }
-        relay_server
+        
+        // 解析域名为IP地址
+        crate::resolve_domain_to_ip_for_server(&relay_server)
     }
 }
 
