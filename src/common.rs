@@ -982,6 +982,25 @@ pub fn get_api_server(api: String, custom: String) -> String {
     res
 }
 
+fn resolve_domain_to_ip(url: &str) -> String {
+    // 使用现有的异步域名解析函数的同步版本
+    #[tokio::main(flavor = "current_thread")]
+    async fn resolve_sync(url: &str) -> String {
+        match resolve_url_to_ip(url).await {
+            Ok(resolved_url) => {
+                log::info!("Resolved URL {} to {}", url, resolved_url);
+                resolved_url
+            }
+            Err(e) => {
+                log::warn!("Failed to resolve URL {}: {}, using original", url, e);
+                url.to_string()
+            }
+        }
+    }
+    
+    resolve_sync(url)
+}
+
 fn get_api_server_(api: String, custom: String) -> String {
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
@@ -1005,7 +1024,8 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "http://rdp.79035684.xyz:21114".to_owned()
+    // 将域名解析为IP地址后返回
+    resolve_domain_to_ip("http://rdp.hanlyenergy.tech:21114")
 }
 
 #[inline]
