@@ -114,6 +114,9 @@ pub fn global_init() -> bool {
         }
     }
     
+    // 初始化域名解析缓存
+    hbb_common::config::init_domain_cache();
+    
     true
 }
 
@@ -983,22 +986,23 @@ pub fn get_api_server(api: String, custom: String) -> String {
 }
 
 fn resolve_domain_to_ip(url: &str) -> String {
-    // 使用现有的异步域名解析函数的同步版本
-    #[tokio::main(flavor = "current_thread")]
-    async fn resolve_sync(url: &str) -> String {
-        match resolve_url_to_ip(url).await {
-            Ok(resolved_url) => {
-                log::info!("Resolved URL {} to {}", url, resolved_url);
-                resolved_url
-            }
-            Err(e) => {
-                log::warn!("Failed to resolve URL {}: {}, using original", url, e);
-                url.to_string()
+    // 使用缓存的域名解析，避免运行时DNS查询
+    if let Some(domain_part) = url.strip_prefix("http://") {
+        if let Some(colon_pos) = domain_part.find(':') {
+            let domain = &domain_part[..colon_pos];
+            let port = &domain_part[colon_pos + 1..];
+            let domain_with_port = format!("{}:{}", domain, port);
+            
+            // 从hbb_common的缓存中获取解析结果
+            let resolved = hbb_common::config::get_cached_resolution(&domain_with_port);
+            if resolved != domain_with_port {
+                return format!("http://{}", resolved);
             }
         }
     }
     
-    resolve_sync(url)
+    // 如果没有缓存结果，返回原始URL
+    url.to_string()
 }
 
 // 专门用于服务器地址的域名解析（支持带端口和不带端口的地址）
@@ -1008,33 +1012,8 @@ pub fn resolve_domain_to_ip_for_server(server_addr: &str) -> String {
         return resolve_domain_to_ip(server_addr);
     }
     
-    // 对于纯地址:端口格式的服务器地址
-    if let Some(colon_pos) = server_addr.rfind(':') {
-        let domain = &server_addr[..colon_pos];
-        let port = &server_addr[colon_pos + 1..];
-        
-        // 如果已经是IP地址，直接返回
-        if hbb_common::is_ip_str(domain) {
-            return server_addr.to_string();
-        }
-        
-        // 尝试解析域名为IP地址
-        match format!("{}:{}", domain, port).to_socket_addrs() {
-            Ok(mut addrs) => {
-                if let Some(addr) = addrs.next() {
-                    log::info!("Resolved server domain {} to IP {}", domain, addr.ip());
-                    return format!("{}:{}", addr.ip(), port);
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to resolve server domain {}: {}", domain, e);
-            }
-        }
-    }
-    
-    // 如果解析失败，返回原始地址
-    log::warn!("Using original server address as fallback: {}", server_addr);
-    server_addr.to_string()
+    // 从hbb_common的缓存中获取解析结果
+    hbb_common::config::get_cached_resolution(server_addr)
 }
 
 fn get_api_server_(api: String, custom: String) -> String {
