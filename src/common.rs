@@ -114,7 +114,7 @@ pub fn global_init() -> bool {
         }
     }
     
-    // 初始化域名解析缓存
+    // 初始化域名解析缓存（现在使用懒加载，这里主要是预热）
     hbb_common::config::init_domain_cache();
     
     true
@@ -1091,10 +1091,71 @@ fn get_api_server_(api: String, custom: String) -> String {
         log::info!("get_api_server_: using default server: {}", result);
     }
     
-    // 统一进行域名解析转换
-    let final_result = resolve_domain_to_ip(&result);
-    log::info!("get_api_server_: final result after domain resolution: {} -> {}", result, final_result);
-    final_result
+    // 统一进行域名解析：如果URL包含域名，解析为IP
+    result = resolve_url_domains_to_ip(&result);
+    
+    log::info!("get_api_server_: final result: {}", result);
+    result
+}
+
+// 解析URL中的域名为IP地址
+fn resolve_url_domains_to_ip(url: &str) -> String {
+    // 解析URL
+    if let Some(domain_start) = url.find("://") {
+        let protocol = &url[..domain_start + 3]; // 包含 "://"
+        let rest = &url[domain_start + 3..];
+        
+        // 查找域名部分（到第一个 '/' 或字符串结束）
+        let domain_end = rest.find('/').unwrap_or(rest.len());
+        let domain_part = &rest[..domain_end];
+        let path_part = &rest[domain_end..];
+        
+        // 检查是否包含端口
+        if let Some(colon_pos) = domain_part.rfind(':') {
+            let domain = &domain_part[..colon_pos];
+            let port = &domain_part[colon_pos..]; // 包含冒号
+            
+            // 检查域名是否为IP地址
+            if !crate::is_ip_str(domain) {
+                // 尝试解析域名
+                let domain_with_port = format!("{}:80", domain); // 临时端口用于解析
+                match domain_with_port.to_socket_addrs() {
+                    Ok(mut addrs) => {
+                        if let Some(addr) = addrs.next() {
+                            let resolved_url = format!("{}{}{}{}", protocol, addr.ip(), port, path_part);
+                            log::info!("Resolved domain {} to IP in URL: {} -> {}", domain, url, resolved_url);
+                            return resolved_url;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to resolve domain {} in URL {}: {}", domain, url, e);
+                    }
+                }
+            }
+        } else {
+            // 没有端口的情况
+            let domain = domain_part;
+            if !crate::is_ip_str(domain) {
+                // 尝试解析域名
+                let domain_with_port = format!("{}:80", domain); // 临时端口用于解析
+                match domain_with_port.to_socket_addrs() {
+                    Ok(mut addrs) => {
+                        if let Some(addr) = addrs.next() {
+                            let resolved_url = format!("{}{}{}", protocol, addr.ip(), path_part);
+                            log::info!("Resolved domain {} to IP in URL: {} -> {}", domain, url, resolved_url);
+                            return resolved_url;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to resolve domain {} in URL {}: {}", domain, url, e);
+                    }
+                }
+            }
+        }
+    }
+    
+    // 如果解析失败或不需要解析，返回原始URL
+    url.to_string()
 }
 
 #[inline]
