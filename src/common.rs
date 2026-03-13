@@ -969,7 +969,11 @@ pub fn get_custom_rendezvous_server(custom: String) -> String {
 
 #[inline]
 pub fn get_api_server(api: String, custom: String) -> String {
-    if Config::no_register_device() {
+    let no_register = Config::no_register_device();
+    log::info!("get_api_server: no_register_device = {}", no_register);
+    
+    if no_register {
+        log::warn!("get_api_server: device registration disabled, returning empty API server");
         return "".to_owned();
     }
     let mut res = get_api_server_(api, custom);
@@ -982,6 +986,7 @@ pub fn get_api_server(api: String, custom: String) -> String {
     {
         return res.replace(":21114", "");
     }
+    log::info!("get_api_server: final result = {}", res);
     res
 }
 
@@ -1100,6 +1105,8 @@ fn get_api_server_(api: String, custom: String) -> String {
 
 // 解析URL中的域名为IP地址
 fn resolve_url_domains_to_ip(url: &str) -> String {
+    log::info!("resolve_url_domains_to_ip: input URL = {}", url);
+    
     // 解析URL
     if let Some(domain_start) = url.find("://") {
         let protocol = &url[..domain_start + 3]; // 包含 "://"
@@ -1110,51 +1117,71 @@ fn resolve_url_domains_to_ip(url: &str) -> String {
         let domain_part = &rest[..domain_end];
         let path_part = &rest[domain_end..];
         
+        log::info!("resolve_url_domains_to_ip: protocol={}, domain_part={}, path_part={}", protocol, domain_part, path_part);
+        
         // 检查是否包含端口
         if let Some(colon_pos) = domain_part.rfind(':') {
             let domain = &domain_part[..colon_pos];
             let port = &domain_part[colon_pos..]; // 包含冒号
             
-            // 检查域名是否为IP地址
-            if !crate::is_ip_str(domain) {
+            log::info!("resolve_url_domains_to_ip: domain={}, port={}", domain, port);
+            
+            // 检查域名是否为IP地址（简单检查是否包含字母）
+            if domain.chars().any(|c| c.is_alphabetic()) {
+                log::info!("resolve_url_domains_to_ip: {} contains letters, attempting DNS resolution", domain);
                 // 尝试解析域名
                 let domain_with_port = format!("{}:80", domain); // 临时端口用于解析
                 match domain_with_port.to_socket_addrs() {
                     Ok(mut addrs) => {
                         if let Some(addr) = addrs.next() {
                             let resolved_url = format!("{}{}{}{}", protocol, addr.ip(), port, path_part);
-                            log::info!("Resolved domain {} to IP in URL: {} -> {}", domain, url, resolved_url);
+                            log::info!("resolve_url_domains_to_ip: SUCCESS - resolved {} to IP: {} -> {}", domain, url, resolved_url);
                             return resolved_url;
+                        } else {
+                            log::warn!("resolve_url_domains_to_ip: DNS resolution returned no addresses for {}", domain);
                         }
                     }
                     Err(e) => {
-                        log::warn!("Failed to resolve domain {} in URL {}: {}", domain, url, e);
+                        log::warn!("resolve_url_domains_to_ip: DNS resolution failed for {}: {}", domain, e);
                     }
                 }
+            } else {
+                log::info!("resolve_url_domains_to_ip: {} appears to be an IP address, no resolution needed", domain);
             }
         } else {
             // 没有端口的情况
             let domain = domain_part;
-            if !crate::is_ip_str(domain) {
+            log::info!("resolve_url_domains_to_ip: no port found, domain={}", domain);
+            
+            // 检查域名是否为IP地址（简单检查是否包含字母）
+            if domain.chars().any(|c| c.is_alphabetic()) {
+                log::info!("resolve_url_domains_to_ip: {} contains letters, attempting DNS resolution", domain);
                 // 尝试解析域名
                 let domain_with_port = format!("{}:80", domain); // 临时端口用于解析
                 match domain_with_port.to_socket_addrs() {
                     Ok(mut addrs) => {
                         if let Some(addr) = addrs.next() {
                             let resolved_url = format!("{}{}{}", protocol, addr.ip(), path_part);
-                            log::info!("Resolved domain {} to IP in URL: {} -> {}", domain, url, resolved_url);
+                            log::info!("resolve_url_domains_to_ip: SUCCESS - resolved {} to IP: {} -> {}", domain, url, resolved_url);
                             return resolved_url;
+                        } else {
+                            log::warn!("resolve_url_domains_to_ip: DNS resolution returned no addresses for {}", domain);
                         }
                     }
                     Err(e) => {
-                        log::warn!("Failed to resolve domain {} in URL {}: {}", domain, url, e);
+                        log::warn!("resolve_url_domains_to_ip: DNS resolution failed for {}: {}", domain, e);
                     }
                 }
+            } else {
+                log::info!("resolve_url_domains_to_ip: {} appears to be an IP address, no resolution needed", domain);
             }
         }
+    } else {
+        log::warn!("resolve_url_domains_to_ip: URL does not contain protocol separator '://'");
     }
     
     // 如果解析失败或不需要解析，返回原始URL
+    log::info!("resolve_url_domains_to_ip: returning original URL: {}", url);
     url.to_string()
 }
 
